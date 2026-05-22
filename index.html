@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Démo : génération token par token — Modèle Keras</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #f5f4f0;
+    --surface:   #ffffff;
+    --surface2:  #f0efe9;
+    --border:    #dddcd6;
+    --border2:   #c8c7c0;
+    --text:      #1a1a18;
+    --text2:     #5c5c58;
+    --text3:     #9e9e98;
+    --blue:      #185fa5;
+    --blue-bg:   #e6f1fb;
+    --purple:    #3c3489;
+    --purple-bg: #eeedfe;
+    --amber:     #854f0b;
+    --amber-bg:  #faeeda;
+    --green:     #3b6d11;
+    --green-bg:  #eaf3de;
+    --red:       #a32d2d;
+    --radius:    8px;
+    --radius-lg: 12px;
+    --mono:      'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --sans:      system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────────────── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 {
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--text3);
+    font-family: var(--sans);
+  }
+  .badge.online  { background: var(--green-bg);  color: var(--green); border-color: #c0dd97; }
+  .badge.offline { background: #fcebeb;          color: var(--red);   border-color: #f7c1c1; }
+
+  /* ── Layout principal : 3 colonnes ───────────────────────────────────── */
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr 230px;
+    gap: 1px;
+    background: var(--border);
+    height: calc(100vh - 45px);
+  }
+  .col {
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Panel générique ─────────────────────────────────────────────────── */
+  .panel {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+    flex-shrink: 0;
+  }
+  .panel.grow { flex: 1 1 auto; overflow-y: auto; }
+
+  .panel-title {
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text3);
+    margin-bottom: 8px;
+  }
+  .panel-title .num { color: var(--text3); margin-right: 3px; }
+
+  /* ── Textareas ───────────────────────────────────────────────────────── */
+  textarea {
+    width: 100%;
+    resize: none;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s;
+    line-height: 1.6;
+  }
+  textarea:focus { border-color: var(--border2); }
+
+  /* ── Boutons ─────────────────────────────────────────────────────────── */
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    margin-top: auto;
+  }
+  button {
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 5px 14px;
+    cursor: pointer;
+    transition: background .12s, transform .1s;
+  }
+  button:hover  { background: var(--surface2); }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .4; cursor: default; }
+
+  .btn-primary {
+    background: var(--text);
+    color: var(--surface);
+    border-color: transparent;
+  }
+  .btn-primary:hover { opacity: .85; background: var(--text); }
+
+  /* ── Contexte ────────────────────────────────────────────────────────── */
+  .ctx-bar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .ctx-tag {
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: var(--sans);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+  .ctx-tag.sys  { background: var(--blue-bg);   color: var(--blue); }
+  .ctx-tag.hist { background: var(--purple-bg); color: var(--purple); }
+  .ctx-tag.dem  { background: var(--amber-bg);  color: var(--amber); }
+  .ctx-tag.info { font-size: 10.5px; color: var(--text3); font-family: var(--sans); }
+
+  .ctx-body {
+    font-size: 11.5px;
+    line-height: 1.75;
+    white-space: pre-wrap;
+    color: var(--text2);
+  }
+  .ctx-label  { color: var(--blue);   font-weight: 600; }
+  .ctx-demand { color: var(--amber);  font-weight: 600; }
+
+  /* ── Réponse token par token ─────────────────────────────────────────── */
+  .response-area {
+    font-size: 13.5px;
+    line-height: 1.85;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tok-new {
+    background: var(--purple-bg);
+    color: var(--purple);
+    border-radius: 3px;
+    padding: 0 2px;
+    transition: background .5s, color .5s;
+  }
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: var(--text);
+    vertical-align: -3px;
+    opacity: 0;
+  }
+  .cursor.on { animation: blink 1s step-end infinite; opacity: 1; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  .token-counter {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 10px;
+  }
+  .prog-bg { height: 3px; background: var(--surface2); border-radius: 2px; margin-top: 5px; }
+  .prog-bar { height: 3px; background: var(--purple); border-radius: 2px; transition: width .2s; }
+
+  /* ── Panneau droit ───────────────────────────────────────────────────── */
+  .token-display {
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+    min-height: 46px;
+    padding: 6px 0 4px;
+    word-break: break-all;
+  }
+  .token-pos { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  .alts-area { min-height: 44px; }
+  .alt-tok {
+    display: inline-block;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 7px;
+    margin: 2px 3px 2px 0;
+    font-size: 11.5px;
+    color: var(--text2);
+  }
+
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-label { color: var(--text2); }
+  .metric-val { font-weight: 600; color: var(--text); font-family: var(--mono); }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--purple);
+    cursor: pointer;
+  }
+  .temp-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-top: 4px;
+    font-family: var(--sans);
+  }
+
+  input[type=text] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 5px 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    outline: none;
+    margin-top: 5px;
+  }
+
+  /* ── Scrollbar discrète ───────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Démo : consignes, historique et génération token par token</h1>
+  <span class="badge" id="api-badge">API…</span>
+</header>
+
+<div class="layout">
+
+  <!-- ── Colonne gauche ────────────────────────────────────────────────── -->
+  <div class="col">
+    <div class="panel">
+      <div class="panel-title"><span class="num">1.</span> Consignes données au modèle</div>
+      <textarea id="system-prompt" rows="7"
+        placeholder="Ex : Tu es un assistant qui génère du texte en français de façon cohérente."></textarea>
+    </div>
+
+    <div class="panel" style="flex:1 1 auto; overflow:hidden; display:flex; flex-direction:column;">
+      <div class="panel-title"><span class="num">2.</span> Historique simulé</div>
+      <textarea id="history" rows="5" style="flex:1 1 auto;"
+        placeholder="Ex : Utilisateur : Parle-moi de l'IA.&#10;Modèle : L'intelligence artificielle est…"></textarea>
+      <div style="margin-top:8px">
+        <button onclick="clearHistory()">Vider l'historique</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title"><span class="num">3.</span> Demande utilisateur actuelle</div>
+      <textarea id="user-input" rows="3" placeholder="C'est quoi un LLM ?"></textarea>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-primary" onclick="prepare()">Préparer</button>
+      <button id="btn-next" onclick="nextToken()" disabled>Token suivant</button>
+      <button id="btn-auto" onclick="toggleAuto()">Lecture auto</button>
+    </div>
+  </div>
+
+  <!-- ── Colonne centrale ──────────────────────────────────────────────── -->
+  <div class="col">
+    <div class="panel">
+      <div class="panel-title">Contexte courant</div>
+      <div class="ctx-bar">
+        <span class="ctx-tag sys">Consignes</span>
+        <span class="ctx-tag hist">Historique</span>
+        <span class="ctx-tag dem">Demande</span>
+        <span class="ctx-tag info" id="ctx-status">· en attente</span>
+      </div>
+      <div class="ctx-body" id="ctx-display">
+        <span style="color:#b0afa8">Remplissez les champs à gauche et cliquez sur « Préparer ».</span>
+      </div>
+    </div>
+
+    <div class="panel grow">
+      <div class="panel-title">Réponse construite progressivement</div>
+      <div class="response-area" id="response-area">
+        <span class="cursor" id="cursor"></span>
+      </div>
+      <div class="token-counter" id="token-counter">Token 0 / 0</div>
+      <div class="prog-bg"><div class="prog-bar" id="prog-bar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Colonne droite ────────────────────────────────────────────────── -->
+  <div class="col">
+    <div class="panel">
+      <div class="panel-title">Token courant</div>
+      <div class="token-display" id="tok-display">–</div>
+      <div class="token-pos" id="tok-pos"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Alternatives possibles</div>
+      <div class="alts-area" id="alts-area"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Température : <strong id="temp-val">0.70</strong></div>
+      <input type="range" min="0" max="1.5" step="0.05" value="0.7" id="temp-slider"
+             oninput="document.getElementById('temp-val').textContent=parseFloat(this.value).toFixed(2)">
+      <div class="temp-labels">
+        <span>0 · stable</span>
+        <span>1.5 · variable</span>
+      </div>
+    </div>
+
+    <div class="panel" style="flex:1 1 auto; overflow-y:auto;">
+      <div class="panel-title">Mesures de génération</div>
+      <div class="metric-row"><span class="metric-label">Tokens prompt initial</span>   <span class="metric-val" id="m-prompt">–</span></div>
+      <div class="metric-row"><span class="metric-label">Tokens affichés</span>          <span class="metric-val" id="m-shown">0</span></div>
+      <div class="metric-row"><span class="metric-label">Tokens restants ≈</span>        <span class="metric-val" id="m-remain">–</span></div>
+      <div class="metric-row"><span class="metric-label">Inférences montrées</span>      <span class="metric-val" id="m-infer">0</span></div>
+      <div class="metric-row"><span class="metric-label">Taille contexte ≈</span>        <span class="metric-val" id="m-ctx">–</span></div>
+      <div class="metric-row"><span class="metric-label">Progression</span>              <span class="metric-val" id="m-prog">0 %</span></div>
+      <div class="metric-row"><span class="metric-label">Durée génération</span>         <span class="metric-val" id="m-dur">– s</span></div>
+      <div class="metric-row"><span class="metric-label">Vitesse moyenne</span>          <span class="metric-val" id="m-speed">– tok/s</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">URL de l'API Flask</div>
+      <input type="text" id="api-url" value="http://localhost:5000/generate">
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── État global ────────────────────────────────────────────────────────────
+let tokens     = [];
+let idx        = 0;
+let autoTimer  = null;
+let isAuto     = false;
+let startTime  = null;
+let prepared   = false;
+
+// ── Vérification santé API ─────────────────────────────────────────────────
+async function checkHealth() {
+  const base = document.getElementById('api-url').value.replace('/generate','');
+  try {
+    const r = await fetch(base + '/health', { signal: AbortSignal.timeout(2000) });
+    const badge = document.getElementById('api-badge');
+    if (r.ok) { badge.textContent = 'API connectée'; badge.className = 'badge online'; }
+    else       { badge.textContent = 'API erreur';    badge.className = 'badge offline'; }
+  } catch {
+    const badge = document.getElementById('api-badge');
+    badge.textContent = 'API hors ligne'; badge.className = 'badge offline';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 8000);
+
+// ── Préparer la génération ─────────────────────────────────────────────────
+async function prepare() {
+  const sys  = document.getElementById('system-prompt').value.trim();
+  const hist = document.getElementById('history').value.trim();
+  const user = document.getElementById('user-input').value.trim();
+  if (!user) { alert('Entrez une demande utilisateur.'); return; }
+
+  // Affiche le contexte
+  let html = '';
+  if (sys)  html += `<span class="ctx-label">[CONSIGNES DONNÉES AU MODÈLE]\n</span>${esc(sys)}\n\n`;
+  if (hist) html += `<span class="ctx-label">[HISTORIQUE DE CONVERSATION]\n</span>${esc(hist)}\n\n`;
+  html += `<span class="ctx-demand">[DEMANDE UTILISATEUR ACTUELLE]\n${esc(user)}\n</span>`;
+  html += `\n<span class="ctx-label">[RÉPONSE]</span>`;
+  document.getElementById('ctx-display').innerHTML = html;
+  document.getElementById('ctx-status').textContent = '· appel API en cours…';
+
+  // Réinitialise l'affichage
+  resetDisplay();
+  prepared = false;
+
+  // Appel API
+  const temperature = parseFloat(document.getElementById('temp-slider').value);
+  const apiUrl      = document.getElementById('api-url').value.trim();
+  try {
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: sys, history: hist, user, temperature })
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    tokens = data.tokens || [];
+    const maxTok = data.max_tokens || tokens.length;
+    document.getElementById('m-prompt').textContent  = estimateTokens(sys + hist + user);
+    document.getElementById('m-remain').textContent  = tokens.length;
+    document.getElementById('m-ctx').textContent     = estimateTokens(sys + hist + user);
+    document.getElementById('token-counter').textContent = `Token 0 / ${tokens.length}`;
+    document.getElementById('ctx-status').textContent = '· réponse prête';
+  } catch (e) {
+    console.warn('API indisponible, mode simulation.', e);
+    simulateFallback(user);
+  }
+
+  prepared = true;
+  document.getElementById('btn-next').disabled = false;
+  document.getElementById('cursor').classList.add('on');
+}
+
+// ── Simulation de repli ────────────────────────────────────────────────────
+function simulateFallback(user) {
+  const words = ['Un', 'LLM', 'ou', 'Large', 'Language', 'Model', 'est',
+                 'un', 'modèle', 'de', 'langue', 'à', 'grande', 'échelle',
+                 'entraîné', 'sur', 'de', 'vastes', 'corpus', 'de', 'texte',
+                 'pour', 'prédire', 'le', 'mot', 'suivant', 'dans', 'une', 'séquence', '.'];
+  tokens = words.map(w => ({
+    token: ' ' + w,
+    alternatives: fakeAlts(w)
+  }));
+  document.getElementById('ctx-status').textContent = '· mode simulation (API hors ligne)';
+  document.getElementById('m-prompt').textContent   = estimateTokens(user);
+  document.getElementById('m-remain').textContent   = tokens.length;
+  document.getElementById('m-ctx').textContent      = estimateTokens(user);
+  document.getElementById('token-counter').textContent = `Token 0 / ${tokens.length}`;
+}
+
+// ── Afficher le token suivant ──────────────────────────────────────────────
+function nextToken() {
+  if (!prepared || tokens.length === 0) return;
+  if (idx >= tokens.length) { stopAuto(); return; }
+  if (!startTime) startTime = performance.now();
+
+  const tok     = tokens[idx];
+  const tokStr  = typeof tok === 'object' ? tok.token        : (' ' + tok);
+  const alts    = typeof tok === 'object' ? tok.alternatives : fakeAlts(tokStr);
+
+  // Ajoute le token dans la zone de réponse
+  const area   = document.getElementById('response-area');
+  const cursor = document.getElementById('cursor');
+  const span   = document.createElement('span');
+  span.className = 'tok-new';
+  span.textContent = tokStr;
+  area.insertBefore(span, cursor);
+  // Retire la surbrillance après 600ms
+  setTimeout(() => { span.className = ''; }, 600);
+
+  // Met à jour le panneau droit
+  document.getElementById('tok-display').textContent = `"${tokStr.trim()}"`;
+  document.getElementById('tok-pos').textContent     = `position ${idx + 1} / ${tokens.length}`;
+  document.getElementById('alts-area').innerHTML     =
+    alts.map(a => `<span class="alt-tok">${esc(a)}</span>`).join('');
+
+  idx++;
+  const elapsed = (performance.now() - startTime) / 1000;
+  const speed   = idx / elapsed;
+  const promptN = parseInt(document.getElementById('m-prompt').textContent) || 0;
+
+  document.getElementById('m-shown').textContent  = idx;
+  document.getElementById('m-infer').textContent  = idx;
+  document.getElementById('m-remain').textContent = Math.max(0, tokens.length - idx);
+  document.getElementById('m-ctx').textContent    = promptN + idx;
+  document.getElementById('m-prog').textContent   = Math.round(idx / tokens.length * 100) + ' %';
+  document.getElementById('m-dur').textContent    = elapsed.toFixed(2) + ' s';
+  document.getElementById('m-speed').textContent  = speed.toFixed(1) + ' tok/s';
+  document.getElementById('prog-bar').style.width = (idx / tokens.length * 100) + '%';
+  document.getElementById('token-counter').textContent = `Token ${idx} / ${tokens.length}`;
+
+  if (idx >= tokens.length) {
+    stopAuto();
+    document.getElementById('btn-next').disabled = true;
+    document.getElementById('cursor').classList.remove('on');
+    document.getElementById('ctx-status').textContent = '· génération terminée ✓';
+  }
+}
+
+// ── Lecture automatique ────────────────────────────────────────────────────
+function toggleAuto() {
+  isAuto ? stopAuto() : startAuto();
+}
+function startAuto() {
+  isAuto = true;
+  document.getElementById('btn-auto').textContent = 'Pause';
+  autoTimer = setInterval(() => {
+    if (idx >= tokens.length) stopAuto();
+    else nextToken();
+  }, 200);
+}
+function stopAuto() {
+  isAuto = false;
+  clearInterval(autoTimer);
+  document.getElementById('btn-auto').textContent = 'Lecture auto';
+}
+
+// ── Utilitaires ────────────────────────────────────────────────────────────
+function clearHistory() { document.getElementById('history').value = ''; }
+
+function resetDisplay() {
+  stopAuto();
+  tokens = []; idx = 0; startTime = null; prepared = false;
+  document.getElementById('response-area').innerHTML = '<span class="cursor" id="cursor"></span>';
+  document.getElementById('tok-display').textContent = '–';
+  document.getElementById('tok-pos').textContent     = '';
+  document.getElementById('alts-area').innerHTML     = '';
+  ['m-shown','m-infer'].forEach(id => document.getElementById(id).textContent = '0');
+  ['m-remain','m-ctx','m-prompt','m-dur','m-speed'].forEach(id =>
+    document.getElementById(id).textContent = '–');
+  document.getElementById('m-prog').textContent         = '0 %';
+  document.getElementById('prog-bar').style.width       = '0%';
+  document.getElementById('token-counter').textContent  = 'Token 0 / 0';
+  document.getElementById('btn-next').disabled          = true;
+}
+
+function estimateTokens(text) { return Math.round(text.length / 4); }
+
+function fakeAlts(word) {
+  const pool = [' le',' la',' un',' est',' de',' et',' en',' que',' dans',' il'];
+  const alts = [];
+  const w = ' ' + (word || '').replace(/^ /, '');
+  for (const p of pool) {
+    if (p !== w && alts.length < 4) alts.push(p);
+  }
+  return alts;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
