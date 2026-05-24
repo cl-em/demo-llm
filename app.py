@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 
 
-MODEL_PATH     = "llm_epoch_10.keras"      # chemin vers le fichier .keras ou .h5
+MODEL_PATH     = "llm_epoch_10_better.keras"      # chemin vers le fichier .keras ou .h5
 SEQ_LEN        = 20                 # longueur de séquence d'entrée du modèle
 MAX_TOKENS     = 512                # nombre maximum de mots générés
 TOP_K          = 5                  # nombre d'alternatives retournées par token

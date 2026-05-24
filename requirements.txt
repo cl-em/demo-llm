@@ -1,0 +1,6 @@
+Flask>=2.0
+Flask-Cors
+numpy>=1.21
+tensorflow>=2.10
+transformers
+sentencepiece
