@@ -1,19 +1,3 @@
-"""
-Backend Flask — Démonstration génération mot par mot avec modèle Keras LSTM/GRU
----------------------------------------------------------------------------
-Structure attendue du modèle :
-  - Entrée  : séquence d'indices de mots  (shape: [1, seq_len])
-  - Sortie  : distribution de probabilité sur le vocabulaire  (shape: [1, vocab_size])
-
-Fichiers nécessaires (même dossier que app.py) :
-  - model.keras   (ou model.h5)  → votre modèle entraîné
-  - tokenizer.pkl               → le Tokenizer Keras sérialisé avec pickle
-                                  (celui utilisé à l'entraînement)
-
-Lancer le serveur :
-  pip install flask flask-cors tensorflow numpy
-  python app.py
-"""
 
 import os
 import pickle
@@ -25,101 +9,58 @@ from flask_cors import CORS
 
 import tensorflow as tf
 from tensorflow import keras
-try:
-    # Prefer AutoTokenizer so user can specify "camembert-base" or a local tokenizer name
-    from transformers import AutoTokenizer
-except Exception:
-    AutoTokenizer = None
+from transformers import AutoTokenizer
 
-# ---------------------------------------------------------------------------
-# Configuration — adaptez ces valeurs à votre modèle
-# ---------------------------------------------------------------------------
 
-MODEL_PATH     = "llm_512_epoch_05.keras"      # chemin vers le fichier .keras ou .h5
-TOKENIZER_PATH = "tokenizer.pkl"    # chemin vers le tokenizer sérialisé
+
+MODEL_PATH     = "llm_epoch_10.keras"      # chemin vers le fichier .keras ou .h5
 SEQ_LEN        = 20                 # longueur de séquence d'entrée du modèle
 MAX_TOKENS     = 512                # nombre maximum de mots générés
 TOP_K          = 5                  # nombre d'alternatives retournées par token
-# Nom du tokenizer HuggingFace à charger directement (vide pour désactiver)
-HF_TOKENIZER_NAME = ""             # ex: "camembert-base" ou "facebook/camembert-base"
 
-# ---------------------------------------------------------------------------
-# Chargement du modèle et du tokenizer
-# ---------------------------------------------------------------------------
+
+
 
 print("Chargement du modèle Keras…")
 model = keras.models.load_model(MODEL_PATH)
 model.summary()
+
+# Adapter la longueur de séquence au modèle chargé (évite la mismatch shape)
+try:
+    model_input_shape = model.input_shape
+    if isinstance(model_input_shape, (list, tuple)) and len(model_input_shape) >= 2:
+        SEQ_LEN = int(model_input_shape[1])
+        print(f"SEQ_LEN ajusté à {SEQ_LEN} d'après le modèle chargé.")
+except Exception:
+    pass
 
 print("Chargement du tokenizer…")
 is_hf_tokenizer = False
 tokenizer = None
 index_word = {}
 
-# Priorité : si HF_TOKENIZER_NAME est défini, charger directement le tokenizer HF
-if HF_TOKENIZER_NAME:
-    if AutoTokenizer is None:
-        raise RuntimeError("transformers non installé — installez 'transformers' pour utiliser un tokenizer CamemBERT")
-    print("Chargement du tokenizer HuggingFace (option explicite):", HF_TOKENIZER_NAME)
-    tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER_NAME)
-    is_hf_tokenizer = True
 
-    try:
-        vocab_size = tokenizer.vocab_size
-    except Exception:
-        vocab_size = getattr(tokenizer, "get_vocab", lambda: {})()
-        vocab_size = len(vocab_size) if isinstance(vocab_size, dict) else 0
+tokenizer = AutoTokenizer.from_pretrained("camembert-base")
+is_hf_tokenizer = True
 
+# Construire la table id -> token pour pouvoir décoder les indices produits
+index_word = {}
+try:
+    # get_vocab renvoie {token: id}
+    vocab = tokenizer.get_vocab()
+    for tok, idx in vocab.items():
+        # convert_ids_to_tokens gère les marqueurs SentencePiece/BPE (ex: '▁')
+        index_word[int(idx)] = tokenizer.convert_ids_to_tokens([int(idx)])[0]
+except Exception:
     index_word = {}
-    if vocab_size and hasattr(tokenizer, 'convert_ids_to_tokens'):
-        ids = list(range(vocab_size))
-        toks = tokenizer.convert_ids_to_tokens(ids)
-        for i, t in enumerate(toks):
-            index_word[i] = t
 
-    print(f"Tokenizer HF explicite chargé (vocab_size={vocab_size})")
-else:
-    # Si le chemin se termine par .pkl, on tente d'abord le Tokenizer Keras sérialisé
-    if TOKENIZER_PATH and TOKENIZER_PATH.lower().endswith(".pkl"):
-        try:
-            with open(TOKENIZER_PATH, "rb") as f:
-                tokenizer = pickle.load(f)
-            # Index inversé : indice → mot (Keras Tokenizer)
-            index_word = getattr(tokenizer, "index_word", {})
-            print("Tokenizer Keras chargé depuis", TOKENIZER_PATH)
-        except Exception as e:
-            print("Échec chargement tokenizer Keras:", e)
 
-    # Si on n'a pas de tokenizer Keras, on essaye de charger un tokenizer HuggingFace
-    if tokenizer is None:
-        if AutoTokenizer is None:
-            raise RuntimeError("transformers non installé — installez 'transformers' pour utiliser un tokenizer CamemBERT")
-        # Permettre d'utiliser des alias comme 'camembert' ou 'camembert-base'
-        hf_name = TOKENIZER_PATH if TOKENIZER_PATH and not TOKENIZER_PATH.lower().endswith('.pkl') else 'camembert-base'
-        print("Chargement du tokenizer HuggingFace:", hf_name)
-        tokenizer = AutoTokenizer.from_pretrained(hf_name)
-        is_hf_tokenizer = True
-
-        # Construire un index inversé simple id -> token
-        try:
-            vocab_size = tokenizer.vocab_size
-        except Exception:
-            vocab_size = getattr(tokenizer, "get_vocab", lambda: {})()
-            vocab_size = len(vocab_size) if isinstance(vocab_size, dict) else 0
-
-        # Convert ids to tokens for the possible id range
-        index_word = {}
-        if vocab_size and hasattr(tokenizer, 'convert_ids_to_tokens'):
-            ids = list(range(vocab_size))
-            toks = tokenizer.convert_ids_to_tokens(ids)
-            for i, t in enumerate(toks):
-                index_word[i] = t
-
-        print(f"Tokenizer HF chargé (vocab_size={vocab_size})")
-
-# ---------------------------------------------------------------------------
-# Fonctions utilitaires
-# ---------------------------------------------------------------------------
+def normalize_token(tok: str) -> str:
+    """Transforme un token HF en forme lisible (remplace les marqueurs par un espace)."""
+    if tok is None:
+        return "<unk>"
+    # remplace les marqueurs courants de tokenisation par un espace
+    return tok.replace('▁', ' ').replace('Ġ', ' ')
 
 def sample_with_temperature(logits: np.ndarray, temperature: float) -> int:
     """Echantillonne un indice depuis les logits avec une température."""
@@ -127,7 +68,7 @@ def sample_with_temperature(logits: np.ndarray, temperature: float) -> int:
         return int(np.argmax(logits))
     logits = np.asarray(logits, dtype=np.float64)
     logits = np.log(logits + 1e-10) / temperature
-    logits -= logits.max()                      # stabilisation numérique
+    logits -= logits.max()                  
     probs = np.exp(logits)
     probs /= probs.sum()
     return int(np.random.choice(len(probs), p=probs))
@@ -142,7 +83,7 @@ def top_k_alternatives(probs: np.ndarray, chosen_idx: int, k: int = 5) -> list:
             continue
         word = index_word.get(int(i), "<unk>")
         if word and word != "<unk>":
-            alts.append(word)
+            alts.append(normalize_token(word))
         if len(alts) >= k:
             break
     return alts
@@ -151,8 +92,6 @@ def top_k_alternatives(probs: np.ndarray, chosen_idx: int, k: int = 5) -> list:
 def text_to_sequence(text: str) -> list:
     """Convertit un texte en liste d'indices via le tokenizer."""
     if is_hf_tokenizer:
-        # Utilise le tokenizer HuggingFace pour obtenir des ids de tokens
-        # Ne pas ajouter de tokens spéciaux pour rester compatible avec le modèle
         ids = tokenizer.encode(text, add_special_tokens=False)
         return list(ids)
     else:
@@ -160,7 +99,7 @@ def text_to_sequence(text: str) -> list:
         return seqs[0] if seqs else []
 
 
-def generate_all_tokens(seed_text: str, temperature: float = 0.7) -> list:
+def generate_all_tokens(seed_text: str, temperature: float = 0.7, repetition_penalty: float = 1.0) -> list:
     """
     Génère MAX_TOKENS mots à partir d'un texte amorce.
     Retourne une liste de dicts  { token, alternatives, probs }.
@@ -176,11 +115,28 @@ def generate_all_tokens(seed_text: str, temperature: float = 0.7) -> list:
         x = np.array([padded])                     # shape (1, SEQ_LEN)
 
         # Inférence
-        preds = model.predict(x, verbose=0)[0]     # shape (vocab_size,)
+        preds = model.predict(x, verbose=0)[0]     # shape possible (SEQ_LEN, vocab_size)
+        # Si le modèle renvoie une distribution pour chaque position, on prend la
+        # distribution du dernier pas de temps (prédiction du token suivant).
+        preds = np.asarray(preds)
+        if preds.ndim == 2:
+            preds = preds[-1]
+        preds = preds.ravel()
+
+        # Appliquer une pénalité de répétition : réduire la probabilité
+        # des tokens déjà présents dans la séquence.
+        if repetition_penalty is not None and repetition_penalty > 1.0:
+            try:
+                seen = set(sequence)
+                for sid in seen:
+                    if 0 <= int(sid) < preds.shape[0]:
+                        preds[int(sid)] = preds[int(sid)] / float(repetition_penalty)
+            except Exception:
+                pass
 
         # Echantillonnage
         chosen_idx  = sample_with_temperature(preds, temperature)
-        chosen_word = index_word.get(chosen_idx, "<unk>")
+        chosen_word = normalize_token(index_word.get(chosen_idx, "<unk>"))
 
         # Alternatives
         alts = top_k_alternatives(preds, chosen_idx, k=TOP_K)
@@ -202,12 +158,9 @@ def generate_all_tokens(seed_text: str, temperature: float = 0.7) -> list:
           f"({len(results)/elapsed:.1f} tok/s)")
     return results
 
-# ---------------------------------------------------------------------------
-# Application Flask
-# ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-CORS(app)   # autorise les requêtes depuis localhost (front HTML)
+CORS(app)   
 
 
 @app.route("/", methods=["GET"])
@@ -241,15 +194,30 @@ def generate():
     history     = data.get("history", "").strip()
     user        = data.get("user", "").strip()
     temperature = float(data.get("temperature", 0.7))
+    repetition_penalty = float(data.get("repetition_penalty", 1.0))
 
     if not user:
         return jsonify({"error": "Le champ 'user' est obligatoire."}), 400
 
-    # Construit le texte d'amorce en concaténant les champs disponibles
-    seed_parts = [p for p in [system, history, user] if p]
-    seed_text  = " ".join(seed_parts)
 
-    tokens = generate_all_tokens(seed_text, temperature=temperature)
+
+
+
+    seed_text = "<s>[INST]"
+
+
+    if system:
+        seed_text += f" Consigne : {system} "
+
+    if user:
+        seed_text += f" Consigne : {user} "
+    
+    seed_text += "[/INST]"
+
+   
+
+    tokens = generate_all_tokens(seed_text, temperature=temperature,
+                                  repetition_penalty=repetition_penalty)
 
     return jsonify({
         "tokens":     tokens,
