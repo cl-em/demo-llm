@@ -101,61 +101,84 @@ def text_to_sequence(text: str) -> list:
 
 def generate_all_tokens(seed_text: str, temperature: float = 0.7, repetition_penalty: float = 1.0) -> list:
     """
-    Génère MAX_TOKENS mots à partir d'un texte amorce.
-    Retourne une liste de dicts  { token, alternatives, probs }.
+    Génère des tokens de la même manière que `chat_avec_llm_sans_repetition`
+    Retourne une liste de dicts { token, alternatives, prob }.
     """
-    sequence = text_to_sequence(seed_text)
-    results  = []
-    t0 = time.time()
+    # Construire le prompt et obtenir les ids d'entrée
+    BOS_TOKEN = "<s>"
+    INST_START = "[INST]"
+    INST_END = "[/INST]"
 
-    for _ in range(MAX_TOKENS):
-        # Prépare la fenêtre d'entrée (padding à gauche si nécessaire)
-        padded = sequence[-SEQ_LEN:] if len(sequence) >= SEQ_LEN else \
-                 [0] * (SEQ_LEN - len(sequence)) + sequence
-        x = np.array([padded])                     # shape (1, SEQ_LEN)
+    instruction = seed_text
+    prompt = f"{BOS_TOKEN}{INST_START} {instruction} {INST_END}"
 
-        # Inférence
-        preds = model.predict(x, verbose=0)[0]     # shape possible (SEQ_LEN, vocab_size)
-        # Si le modèle renvoie une distribution pour chaque position, on prend la
-        # distribution du dernier pas de temps (prédiction du token suivant).
-        preds = np.asarray(preds)
-        if preds.ndim == 2:
-            preds = preds[-1]
-        preds = preds.ravel()
+    input_ids = tokenizer(
+        prompt,
+        return_tensors="np",
+        truncation=True,
+        add_special_tokens=False
+    )["input_ids"][0].tolist()
 
-        # Appliquer une pénalité de répétition : réduire la probabilité
-        # des tokens déjà présents dans la séquence.
-        if repetition_penalty is not None and repetition_penalty > 1.0:
-            try:
-                seen = set(sequence)
-                for sid in seen:
-                    if 0 <= int(sid) < preds.shape[0]:
-                        preds[int(sid)] = preds[int(sid)] / float(repetition_penalty)
-            except Exception:
-                pass
+    generated_tokens = input_ids.copy()
+    maxlen = 100
+    length = MAX_TOKENS if MAX_TOKENS is not None else 40
 
-        # Echantillonnage
-        chosen_idx  = sample_with_temperature(preds, temperature)
-        chosen_word = normalize_token(index_word.get(chosen_idx, "<unk>"))
+    for _ in range(length):
+        current_tokens = generated_tokens[-maxlen:]
+        x_pad = tf.keras.preprocessing.sequence.pad_sequences(
+            [current_tokens], maxlen=maxlen, padding='post'
+        )
 
-        # Alternatives
-        alts = top_k_alternatives(preds, chosen_idx, k=TOP_K)
+        preds = model.predict(x_pad, verbose=0)
+        last_idx = min(len(current_tokens) - 1, maxlen - 1)
+        next_token_probs = preds[0, last_idx, :].astype("float64")
 
+        # Passage en logits
+        next_token_logits = np.log(next_token_probs + 1e-7)
+
+        # Pénalité de répétition : on diminue la probabilité des tokens déjà vus
+        for token in set(generated_tokens):
+            if token < len(next_token_logits):
+                if next_token_logits[token] < 0:
+                    next_token_logits[token] *= repetition_penalty
+                else:
+                    next_token_logits[token] /= repetition_penalty
+
+        # Température
+        next_token_logits /= max(temperature, 1e-8)
+
+        # Softmax
+        next_token_logits -= next_token_logits.max()
+        exp_preds = np.exp(next_token_logits)
+        next_token_probs = exp_preds / np.sum(exp_preds)
+
+        next_token = np.random.choice(len(next_token_probs), p=next_token_probs)
+
+        if hasattr(tokenizer, "eos_token_id") and tokenizer.eos_token_id is not None:
+            if next_token == tokenizer.eos_token_id:
+                break
+
+        generated_tokens.append(int(next_token))
+
+    # Construire la sortie sous forme de tokens individuels (compatible API)
+    results = []
+    # On transforme uniquement les nouveaux tokens générés (après l'amorce)
+    for tid in generated_tokens[len(input_ids):]:
+        try:
+            if is_hf_tokenizer:
+                word = tokenizer.convert_ids_to_tokens([int(tid)])[0]
+            else:
+                word = index_word.get(int(tid), str(int(tid)))
+        except Exception:
+            word = index_word.get(int(tid), "<unk>")
+
+        word = normalize_token(word)
         results.append({
-            "token":        " " + chosen_word,     # espace devant comme GPT
-            "alternatives": [" " + a for a in alts],
-            "prob":         float(preds[chosen_idx])
+            "token": " " + word,
+            "alternatives": [],
+            "prob": 0.0
         })
 
-        # Arrêt sur token de fin (si votre modèle en a un)
-        if chosen_word in ("<eos>", "<end>", "."):
-            break
-
-        sequence.append(chosen_idx)
-
-    elapsed = time.time() - t0
-    print(f"Génération : {len(results)} tokens en {elapsed:.2f}s "
-          f"({len(results)/elapsed:.1f} tok/s)")
     return results
 
 
@@ -198,10 +221,6 @@ def generate():
 
     if not user:
         return jsonify({"error": "Le champ 'user' est obligatoire."}), 400
-
-
-
-
 
     seed_text = "<s>[INST]"
 
