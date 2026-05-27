@@ -229,7 +229,7 @@ def generate():
         seed_text += f" Consigne : {system} "
 
     if user:
-        seed_text += f" Consigne : {user} "
+        seed_text += f" Question : {user} "
     
     seed_text += "[/INST]"
 
