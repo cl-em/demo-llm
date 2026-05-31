@@ -11,7 +11,10 @@ import tensorflow as tf
 from tensorflow import keras
 from transformers import AutoTokenizer
 
+import tensorflow as tf
+import keras
 
+tf.keras.backend.set_floatx('float32')
 
 MODEL_PATH     = "llm_epoch_10_better.keras"      # chemin vers le fichier .keras ou .h5
 SEQ_LEN        = 20                 # longueur de séquence d'entrée du modèle
@@ -25,7 +28,7 @@ print("Chargement du modèle Keras…")
 model = keras.models.load_model(MODEL_PATH)
 model.summary()
 
-# Adapter la longueur de séquence au modèle chargé (évite la mismatch shape)
+# Adapter la longueur de séquence au modèle chargé 
 try:
     model_input_shape = model.input_shape
     if isinstance(model_input_shape, (list, tuple)) and len(model_input_shape) >= 2:
@@ -41,6 +44,14 @@ index_word = {}
 
 
 tokenizer = AutoTokenizer.from_pretrained("camembert-base")
+nouveaux_jetons = {'additional_special_tokens': ['[INST]', '[/INST]', '<s>', '</s>']}
+nombre_ajoutes = tokenizer.add_special_tokens(nouveaux_jetons)
+print(f"{nombre_ajoutes} nouveaux jetons spéciaux ajoutés et verrouillés !")
+vocab_size = len(tokenizer)
+print(f"Nouvelle taille du vocabulaire : {vocab_size} tokens.")
+
+
+
 is_hf_tokenizer = True
 
 # Construire la table id -> token pour pouvoir décoder les indices produits
