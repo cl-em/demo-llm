@@ -133,6 +133,7 @@ def generate_all_tokens(seed_text: str, temperature: float = 0.7, repetition_pen
     generated_tokens = input_ids.copy()
     maxlen = 100
     length = MAX_TOKENS if MAX_TOKENS is not None else 40
+    generated_steps = []
 
     for _ in range(length):
         current_tokens = generated_tokens[-maxlen:]
@@ -166,15 +167,23 @@ def generate_all_tokens(seed_text: str, temperature: float = 0.7, repetition_pen
         next_token = np.random.choice(len(next_token_probs), p=next_token_probs)
 
         if hasattr(tokenizer, "eos_token_id") and tokenizer.eos_token_id is not None:
-            if next_token == tokenizer.eos_token_id:
+            if int(next_token) == int(tokenizer.eos_token_id):
                 break
 
+        # Probabilité assignée au token choisi (après softmax)
+        prob = float(next_token_probs[int(next_token)]) if int(next_token) < len(next_token_probs) else 0.0
+
+        # Alternatives top-k (excluant le token choisi)
+        alts = top_k_alternatives(next_token_probs, int(next_token), k=TOP_K)
+
         generated_tokens.append(int(next_token))
+        generated_steps.append({"id": int(next_token), "alternatives": alts, "prob": prob})
 
     # Construire la sortie sous forme de tokens individuels (compatible API)
     results = []
-    # On transforme uniquement les nouveaux tokens générés (après l'amorce)
-    for tid in generated_tokens[len(input_ids):]:
+    # On transforme les étapes collectées durant la génération en sortie lisible
+    for step in generated_steps:
+        tid = step.get("id")
         try:
             if is_hf_tokenizer:
                 word = tokenizer.convert_ids_to_tokens([int(tid)])[0]
@@ -184,10 +193,11 @@ def generate_all_tokens(seed_text: str, temperature: float = 0.7, repetition_pen
             word = index_word.get(int(tid), "<unk>")
 
         word = normalize_token(word)
+        alts = [" " + a for a in step.get("alternatives", [])]
         results.append({
             "token": " " + word,
-            "alternatives": [],
-            "prob": 0.0
+            "alternatives": alts,
+            "prob": float(step.get("prob", 0.0))
         })
 
     return results
